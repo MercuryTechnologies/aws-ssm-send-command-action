@@ -1,0 +1,54 @@
+name: aws-ssm-send-command-action
+description: |
+  GitHub Action for sending commands to AWS Systems Manager. It is a wrapper
+  around the
+  [SendCommand](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html)
+  API call together with some additional features like waiting for the command
+  to finish and printing logs of failed command invocations.
+author: 'Mercury Technologies'
+branding:
+  icon: 'cloud'
+  color: 'yellow'
+
+inputs:
+  document-name:
+    description: |
+      The name of the AWS Systems Manager document (SSM document) to run. This
+      can be a public document or a custom document. To run a shared document
+      belonging to another account, specify the document Amazon Resource Name
+      (ARN).
+    required: true
+  targets:
+    description: |
+      The targets to send the command to. 
+      Must be a JSON string of type `{Key: string, Values: string[]}[]`.
+      * `Key=InstanceIds,Values=instance-id-1,instance-id-2,instance-id-3`
+      * `Key=tag:tag-key,Values=tag-value-1,tag-value-2`
+      * `Key=resource-groups:Name,Values=resource-group-name`
+    required: true
+  parameters:
+    description:
+      'The parameters to pass to the document, if any. Must be a JSON string of
+      type `Record<string, string[]>`'
+    required: false
+  wait-until-command-executed:
+    description: 'Whether to wait until the command has been executed'
+    required: false
+    default: 'false'
+  max-wait-time:
+    description: 'The maximum time to wait for the command to finish'
+    required: false
+    default: '600'
+  log-failed-command-invocations:
+    description: |
+      Whether to print logs of failed command invocations. If the command
+      target is targeting hundreds or thousands of instances, this can be
+      expensive and slow.
+    required: false
+    default: 'false'
+outputs:
+  command-id:
+    description: 'The ID of the command that was sent'
+runs:
+  using: node20
+  main: dist/index.js

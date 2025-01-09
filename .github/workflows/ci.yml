@@ -1,0 +1,198 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test-unit:
+    name: TypeScript Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        id: setup-node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install Dependencies
+        id: npm-ci
+        run: npm ci
+
+      - name: Check Format
+        id: npm-format-check
+        run: npm run format:check
+
+      - name: Lint
+        id: npm-lint
+        run: npm run lint
+
+      - name: Test
+        id: npm-ci-test
+        run: npm run test
+
+  test-action:
+    name: Integration test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: integration
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        id: configure-aws-credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: 'arn:aws:iam::640168443522:role/aws-ssm-send-command-action-ci'
+          aws-region: 'eu-central-1'
+          audience: 'sts.amazonaws.com'
+
+      - name: Get latest NixOS image
+        id: image
+        run: |
+          image_id=$(aws ec2 describe-images --owners 427812963091  --filter 'Name=name,Values=nixos/24.11*' 'Name=architecture,Values=arm64' --query 'sort_by(Images, &CreationDate)' --query 'Images[0].ImageId' --output text)
+          echo "image-id=$image_id" >> "$GITHUB_OUTPUT"
+
+      - name: Get caller identity
+        id: get-caller-identity
+        run: |
+          userid=$(aws sts get-caller-identity --query UserId --output text)
+          echo "userid=$userid" >> "$GITHUB_OUTPUT"
+
+      - name: Run instance
+        id: run-instance
+        run: |
+          instance_id=$(aws ec2 run-instances \
+            --instance-type t4g.small \
+            --image-id "$image_id" \
+            --tag-specifications \
+              "ResourceType=instance,Tags=[{Key=ManagedBy,Value=$userid}]" \
+              "ResourceType=volume,Tags=[{Key=ManagedBy,Value=$userid}]" \
+              "ResourceType=network-interface,Tags=[{Key=ManagedBy,Value=$userid}]" \
+            --query 'Instances[0].InstanceId' \
+            --output text)
+          echo "instance-id=$instance_id" >> "$GITHUB_OUTPUT"
+        env:
+          userid: ${{ steps.get-caller-identity.outputs.userid }}
+          image_id: ${{ steps.image.outputs.image-id }}
+
+      - name: Wait for instance running
+        id: wait-instance-running
+        run: aws ec2 wait instance-running --instance-ids "$instance_id"
+        env:
+          instance_id: ${{ steps.run-instance.outputs.instance-id }}
+
+      - name: Wait for instance to appear
+        id: wait-ssm-managed
+        run: |
+          instance=""
+          tries=10
+          while [ -z "$instance" ]; do
+            tries=$((tries - 1))
+            if [ $tries -eq 0 ]; then
+              echo "instance did not appear in time"
+              exit 1
+            fi
+            instance=$(aws ssm describe-instance-information --filters="Key=InstanceIds,Values=$instance_id" --output text)
+            sleep 20
+          done
+        env:
+          instance_id: ${{ steps.run-instance.outputs.instance-id }}
+
+      - name: Send command to instance by instance id
+        id: instanceid-target
+        uses: ./
+        with:
+          document-name: 'AWS-RunShellScript'
+          targets: |
+            [
+              {
+                "Key": "instanceids", 
+                "Values": [${{toJSON(steps.run-instance.outputs.instance-id)}}]
+              }
+            ]
+          parameters: '{"commands": ["echo hello"]}'
+          wait-until-command-executed: true
+
+      - name: Send command to instance by tag
+        id: tag-target
+        uses: ./
+        with:
+          document-name: 'AWS-RunShellScript'
+          targets: |
+            [
+              {
+                "Key": "tag:ManagedBy",
+                "Values": [${{toJSON(steps.get-caller-identity.outputs.userid)}}]
+              }
+            ]
+          parameters: '{"commands": ["echo hello"]}'
+          wait-until-command-executed: true
+
+      - name: Send time out command to instance by tag
+        id: tag-target-timeout
+        uses: ./
+        continue-on-error: true
+        with:
+          document-name: 'AWS-RunShellScript'
+          targets: |
+            [
+              {
+                "Key": "tag:ManagedBy",
+                "Values": [${{toJSON(steps.get-caller-identity.outputs.userid)}}]
+              }
+            ]
+          parameters: '{"commands": ["sleep 600"]}'
+          max-wait-time: 20
+          wait-until-command-executed: true
+
+      - name: Previous step should have failed
+        if: steps.tag-target-timeout.outcome  == 'success'
+        run: exit 1
+
+      - name: Send failing command to instance by tag
+        id: tag-target-fail
+        uses: ./
+        continue-on-error: true
+        with:
+          document-name: 'AWS-RunShellScript'
+          targets: |
+            [
+              {
+                "Key": "tag:ManagedBy",
+                "Values": [${{toJSON(steps.get-caller-identity.outputs.userid)}}]
+              }
+            ]
+          parameters: '{"commands": ["ls non-existent"]}'
+          wait-until-command-executed: true
+          log-failed-command-invocations: true
+
+      - name: Previous step should have failed
+        if: steps.tag-target-fail.outcome  == 'success'
+        run: exit 1
+
+      - name: Terminate instance
+        id: terminate-instance
+        if: always() && steps.run-instance.outputs.instance-id != ''
+        run: aws ec2 terminate-instances --instance-ids "$instance_id"
+        env:
+          instance_id: ${{ steps.run-instance.outputs.instance-id }}
