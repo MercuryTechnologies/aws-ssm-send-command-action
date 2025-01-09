@@ -52,7 +52,8 @@ jobs:
       contents: read
     environment:
       name: integration
-
+    # TODO: enable again when we have an AWS account set up for this
+    if: false
     steps:
       - name: Checkout
         id: checkout
@@ -62,8 +63,8 @@ jobs:
         id: configure-aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: 'arn:aws:iam::640168443522:role/aws-ssm-send-command-action-ci'
-          aws-region: 'eu-central-1'
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
           audience: 'sts.amazonaws.com'
 
       - name: Get latest NixOS image
