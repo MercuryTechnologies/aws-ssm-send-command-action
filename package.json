@@ -69,10 +69,10 @@
   },
   "dependencies": {
     "@actions/core": "^1.11.1",
-    "@aws-sdk/client-ec2": "^3.723.0",
-    "@aws-sdk/client-ssm": "^3.723.0",
-    "@aws-sdk/client-sts": "^3.723.0",
-    "@aws-sdk/credential-providers": "^3.723.0"
+    "@aws-sdk/client-ec2": "^3.726.1",
+    "@aws-sdk/client-ssm": "^3.726.1",
+    "@aws-sdk/client-sts": "^3.726.1",
+    "@aws-sdk/credential-providers": "^3.726.1"
   },
   "devDependencies": {
     "@github/local-action": "^2.2.1",
